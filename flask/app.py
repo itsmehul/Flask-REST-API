@@ -1,11 +1,14 @@
 from flask import Flask, jsonify, make_response, abort, request, url_for
 from flask_httpauth import HTTPBasicAuth
 from flask_sqlalchemy import SQLAlchemy
+from flask_marshmallow import Marshmallow
 import json
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:toor@localhost/test'
 db = SQLAlchemy(app)
+ma= Marshmallow(app)
+
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True)
@@ -28,6 +31,14 @@ class Tasks(db.Model):
         self.title = title
         self.description = description
         self.done = done
+
+class UserSchema(ma.ModelSchema):
+    class Meta:
+        model = User
+
+class TasksSchema(ma.ModelSchema):
+    class Meta:
+        model = Tasks
 
 #List of dictionaries
 tasks = [
@@ -63,7 +74,9 @@ def unauthorized():
 @app.route('/users')
 def index():
     myUser = User.query.all()
-    return myUser
+    user_schema = UserSchema(many=True)
+    res = user_schema.dump(myUser).data
+    return jsonify({'User':res})
 
 @app.route('/todo/api/v1.0/tasks', methods=['GET'])
 #Add decorator to those routes you wish to guard
