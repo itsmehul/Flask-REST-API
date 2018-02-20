@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, make_response, abort, request
+from flask import Flask, jsonify, make_response, abort, request, url_for
 app = Flask(__name__)
 
 #List of dictionaries
@@ -17,10 +17,11 @@ tasks = [
     }
 ]
 
-#index entry point we now have a get_tasks function that is associated with the /todo/api/v1.0/tasks URI, and only for the GET HTTP method.
+
 @app.route('/todo/api/v1.0/tasks', methods=['GET'])
 def get_tasks():
-    return jsonify({'tasks': tasks})
+    #Executes the make_public_task method for every task in tasks
+    return jsonify({'tasks': [make_public_task(task) for task in tasks]})
 
 #Return data of a single task
 @app.route('/todo/api/v1.0/tasks/<int:task_id>', methods=['GET'])
@@ -82,6 +83,15 @@ def delete_task(task_id):
     tasks.remove(task[0])
     return jsonify({'result': True})
 
+#Creates a new_task with all fields but ID
+def make_public_task(task):
+    new_task = {}
+    for field in task:
+        if field == 'id':
+            new_task['uri'] = url_for('get_task', task_id=task['id'], _external=True)
+        else:
+            new_task[field] = task[field]
+    return new_task
 
 
 if __name__ == '__main__':
