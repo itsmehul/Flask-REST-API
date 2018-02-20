@@ -1,5 +1,33 @@
 from flask import Flask, jsonify, make_response, abort, request, url_for
+from flask_httpauth import HTTPBasicAuth
+from flask_sqlalchemy import SQLAlchemy
+import json
+
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:toor@localhost/test'
+db = SQLAlchemy(app)
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True)
+    email = db.Column(db.String(120), unique=True)
+
+    def __init__(self, username, email):
+        self.username = username
+        self.email = email
+
+    def ___repr__(self):
+        return '<User %r>' % self.username
+
+class Tasks(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(80), unique=True)
+    description = db.Column(db.String(120), unique=True)
+    done = db.Column(db.String(10))
+
+    def __init__(self, username, email):
+        self.title = title
+        self.description = description
+        self.done = done
 
 #List of dictionaries
 tasks = [
@@ -17,8 +45,29 @@ tasks = [
     }
 ]
 
+#User auth logic
+auth = HTTPBasicAuth()
+
+
+
+@auth.get_password
+def get_password(username):
+    if username == 'miguel':
+        return 'python'
+    return None
+
+@auth.error_handler
+def unauthorized():
+    return make_response(jsonify({'error': 'Unauthorized access'}), 401)
+
+@app.route('/users')
+def index():
+    myUser = User.query.all()
+    return myUser
 
 @app.route('/todo/api/v1.0/tasks', methods=['GET'])
+#Add decorator to those routes you wish to guard
+@auth.login_required
 def get_tasks():
     #Executes the make_public_task method for every task in tasks
     return jsonify({'tasks': [make_public_task(task) for task in tasks]})
