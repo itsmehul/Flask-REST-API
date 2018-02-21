@@ -23,11 +23,13 @@ class User(db.Model):
 
 class Tasks(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80))
     title = db.Column(db.String(80), unique=True)
     description = db.Column(db.String(120), unique=True)
     done = db.Column(db.String(10))
 
-    def __init__(self, title, description, done):
+    def __init__(self, name, title, description, done):
+        self.name = name
         self.title = title
         self.description = description
         self.done = done
@@ -79,6 +81,7 @@ def index():
     return jsonify({'User':res})
 
 @app.route('/todo/api/v1.0/tasks', methods=['GET'])
+
 #Add decorator to those routes you wish to guard
 @auth.login_required
 def get_tasks():
@@ -98,19 +101,13 @@ def get_task(task_id):
 def not_found(error):
     return make_response(jsonify({'error': 'Not found'}), 404)
 
-@app.route('/todo/api/v1.0/tasks', methods=['POST'])
-def create_task():
-    #request.json stores all the info from the request in a json format
-    # if not request.json or not 'title' in request.json:
-    #     abort(400)
-    #Define the expected object structure
-    # task = {
-    #     'id': tasks[-1]['id'] + 1,
-    #     'title': request.json['title'],
-    #     'description': request.json.get('description', ""),
-    #     'done': False
-    # }
+#Save task of a particular user
+@app.route('/todo/<string:uname>/tasks', methods=['POST'])
+def create_task(uname):
+    if not request.json or not 'title' in request.json:
+        abort(400)
     task = Tasks(
+        uname,
         request.json['title'],
         request.json['description'],
         False)
@@ -118,28 +115,32 @@ def create_task():
     db.session.commit()
     return jsonify({'result': 'success'})
 
-@app.route('/todo/api/v1.0/tasks/<int:task_id>', methods=['PUT'])
-def update_task(task_id):
-    #Look for task in tasks
-    task = [task for task in tasks if task['id'] == task_id]
-    #Checks if there exist any task
-    if len(task) == 0:
-        abort(404)
-    #Checks if request is of json type
-    if not request.json:
-        abort(400)
-    #Checks for title, description, done
-    if 'title' in request.json and type(request.json['title']) != unicode:
-        abort(400)
-    if 'description' in request.json and type(request.json['description']) is not unicode:
-        abort(400)
-    if 'done' in request.json and type(request.json['done']) is not bool:
-        abort(400)
-    #Updates values by overwriting
-    task[0]['title'] = request.json.get('title', task[0]['title'])
-    task[0]['description'] = request.json.get('description', task[0]['description'])
-    task[0]['done'] = request.json.get('done', task[0]['done'])
-    return jsonify({'task': task[0]})
+@app.route('/todo/<string:uname>/tasks/<int:task_id>', methods=['PUT'])
+def update_task(uname,task_id):
+    #Looks for ID and validates request
+    task = Tasks.query.filter_by(id=task_id).first()
+    # if len(task) == 0:
+    #     abort(404)
+    # if not request.json:
+    #     abort(400)
+    # if 'title' in request.json and type(request.json['title']) != unicode:
+    #     abort(400)
+    # if 'description' in request.json and type(request.json['description']) is not unicode:
+    #     abort(400)
+    # if 'done' in request.json and type(request.json['done']) is not bool:
+    #     abort(400)
+
+    #Checks for data that is changed explicitly
+    if 'title' in request.json:
+        task.title = request.json['title']
+    if 'description' in request.json:
+        task.title = request.json['description']
+    
+    #Changes done value to done implicitly
+    task.done = request.json['done']
+    #Saves changes
+    db.session.commit()
+    return jsonify({'task': 'updated'})
 
 @app.route('/todo/api/v1.0/tasks/<int:task_id>', methods=['DELETE'])
 def delete_task(task_id):
