@@ -142,12 +142,11 @@ def update_task(uname,task_id):
     db.session.commit()
     return jsonify({'task': 'updated'})
 
-@app.route('/todo/api/v1.0/tasks/<int:task_id>', methods=['DELETE'])
-def delete_task(task_id):
-    task = [task for task in tasks if task['id'] == task_id]
-    if len(task) == 0:
-        abort(404)
-    tasks.remove(task[0])
+@app.route('/todo/<string:uname>/tasks/<int:task_id>', methods=['DELETE'])
+def delete_task(uname,task_id):
+    task = Tasks.query.filter_by(id=task_id).first()
+    db.session.delete(task)
+    db.session.commit()
     return jsonify({'result': True})
 
 #Creates a new_task with all fields but ID
