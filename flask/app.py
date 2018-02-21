@@ -27,7 +27,7 @@ class Tasks(db.Model):
     description = db.Column(db.String(120), unique=True)
     done = db.Column(db.String(10))
 
-    def __init__(self, username, email):
+    def __init__(self, title, description, done):
         self.title = title
         self.description = description
         self.done = done
@@ -101,18 +101,22 @@ def not_found(error):
 @app.route('/todo/api/v1.0/tasks', methods=['POST'])
 def create_task():
     #request.json stores all the info from the request in a json format
-    if not request.json or not 'title' in request.json:
-        abort(400)
+    # if not request.json or not 'title' in request.json:
+    #     abort(400)
     #Define the expected object structure
-    task = {
-        'id': tasks[-1]['id'] + 1,
-        'title': request.json['title'],
-        'description': request.json.get('description', ""),
-        'done': False
-    }
-    #Pass the data object into the data structure
-    tasks.append(task)
-    return jsonify({'task': task}), 201
+    # task = {
+    #     'id': tasks[-1]['id'] + 1,
+    #     'title': request.json['title'],
+    #     'description': request.json.get('description', ""),
+    #     'done': False
+    # }
+    task = Tasks(
+        request.json['title'],
+        request.json['description'],
+        False)
+    db.session.add(task)
+    db.session.commit()
+    return jsonify({'result': 'success'})
 
 @app.route('/todo/api/v1.0/tasks/<int:task_id>', methods=['PUT'])
 def update_task(task_id):
