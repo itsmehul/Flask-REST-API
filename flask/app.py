@@ -1,26 +1,39 @@
 from flask import Flask, jsonify, make_response, abort, request, url_for
-from flask_httpauth import HTTPBasicAuth
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
+import uuid
+from werkzeug.security import generate_password_hash, check_password_hash
+import jwt
 import json
+import datetime
+from functools import wraps
 
 app = Flask(__name__)
+app.config['SECRET_KEY']='Linda'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:toor@localhost/test'
 db = SQLAlchemy(app)
 ma= Marshmallow(app)
 
+#USER MODEL
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True)
+    public_id = db.Column(db.String(50),unique=True)
+    username = db.Column(db.String(80))
     email = db.Column(db.String(120), unique=True)
+    password = db.Column(db.String(80))
+    admin = db.Column(db.Boolean)
 
-    def __init__(self, username, email):
+    def __init__(self, pid, username, email, password, admin):
+        self.public_id = pid
         self.username = username
         self.email = email
+        self.password = password
+        self.admin = admin
 
     def ___repr__(self):
         return '<User %r>' % self.username
 
+#TASK MODEL
 class Tasks(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80))
@@ -42,58 +55,77 @@ class TasksSchema(ma.ModelSchema):
     class Meta:
         model = Tasks
 
-#List of dictionaries
-tasks = [
-    {
-        'id': 1,
-        'title': u'Buy groceries',
-        'description': u'Milk, Cheese, Pizza, Fruit, Tylenol', 
-        'done': False
-    },
-    {
-        'id': 2,
-        'title': u'Learn Python',
-        'description': u'Need to find a good Python tutorial on the web', 
-        'done': False
-    }
-]
 
-#User auth logic
-auth = HTTPBasicAuth()
-
-
-
-@auth.get_password
-def get_password(username):
-    if username == 'miguel':
-        return 'python'
-    return None
-
-@auth.error_handler
-def unauthorized():
-    return make_response(jsonify({'error': 'Unauthorized access'}), 401)
-
+#USER ALL USERS
 @app.route('/users')
-def index():
-    myUser = User.query.all()
-    user_schema = UserSchema(many=True)
-    res = user_schema.dump(myUser).data
-    return jsonify({'User':res})
+def get_all_users():
+    users = User.query.all()
+    output=[]
+    for user in users:
+        user_data ={}
+        user_data['public_id'] = user.public_id
+        user_data['username'] = user.username
+        user_data['email'] = user.email
+        output.append(user_data)
 
-@app.route('/todo/api/v1.0/tasks', methods=['GET'])
+    return jsonify({'Users':output})
 
-#Add decorator to those routes you wish to guard
-@auth.login_required
-def get_tasks():
-    #Executes the make_public_task method for every task in tasks
-    return jsonify({'tasks': [make_public_task(task) for task in tasks]})
+#GET USER
+@app.route('/user/<public_id>', methods=['GET'])
+def get_one_user(public_id):
+    user = User.query.filter_by(public_id=public_id).first()
+    if not user:
+        return jsonify({'message':'User not found'})
+    user_data ={}
+    user_data['public_id'] = user.public_id
+    user_data['username'] = user.username
+    user_data['email'] = user.email
+    return jsonify({'User':user_data})   
 
-#Return data of a single task
-@app.route('/todo/api/v1.0/tasks/<int:task_id>', methods=['GET'])
-def get_task(task_id):
+#UPDATE USER TO ADMIN
+@app.route('/user/<public_id>', methods=['PUT'])
+def update_user(public_id):
+    user = User.query.filter_by(public_id=public_id).first()
+    if not user:
+        return jsonify({'message':'User not found'})
+    
+    user.admin= True
+    db.session.commit()
+
+    return jsonify({'message':'User promoted to admin'})   
+
+#ADD USER
+@app.route('/user', methods=['POST'])
+def create_user():
+    data = request.get_json()
+    hashed_password = generate_password_hash(data['password'],method='sha256')
+    new_user = User(str(uuid.uuid4()),data['username'],data['email'],hashed_password,False)
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({'message':'User added'})  
+
+#DELETE USER
+@app.route('/user/<public_id>', methods=['DELETE'])
+def delete_user(public_id):
+    user = User.query.filter_by(public_id=public_id).first()
+    if not user:
+        return jsonify({'message':'User not found'})
+    db.session.delete(user)
+    db.session.commit()
+    return jsonify({'message':'User has been deleted'})    
+
+#GET ALL TASKS
+@app.route('/tasks', methods=['GET'])
+def get_all_tasks():
+    tasks = Tasks.query.all()
+    tasks_schema = TasksSchema(many=True)
+    res = tasks_schema.dump(tasks).data
+    return jsonify({'Tasks':res})
+
+#GET TASK
+@app.route('/task/<int:task_id>', methods=['GET'])
+def get_one_task(task_id):
     task = [task for task in tasks if task['id'] == task_id]
-    if len(task) == 0:
-        abort(404)
     return jsonify({'task': task[0]})
 
 #Because our server should only be resonsing in json format we prevent the body to render a 404 template
@@ -101,13 +133,14 @@ def get_task(task_id):
 def not_found(error):
     return make_response(jsonify({'error': 'Not found'}), 404)
 
-#Save task of a particular user
-@app.route('/todo/<string:uname>/tasks', methods=['POST'])
-def create_task(uname):
-    if not request.json or not 'title' in request.json:
-        abort(400)
+#CREATE TASK
+@app.route('/<username>/tasks', methods=['POST'])
+def create_task(username):
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'message':'User not found'})
     task = Tasks(
-        uname,
+        user.username,
         request.json['title'],
         request.json['description'],
         False)
@@ -115,49 +148,36 @@ def create_task(uname):
     db.session.commit()
     return jsonify({'result': 'success'})
 
-@app.route('/todo/<string:uname>/tasks/<int:task_id>', methods=['PUT'])
-def update_task(uname,task_id):
-    #Looks for ID and validates request
-    task = Tasks.query.filter_by(id=task_id).first()
-    # if len(task) == 0:
-    #     abort(404)
-    # if not request.json:
-    #     abort(400)
-    # if 'title' in request.json and type(request.json['title']) != unicode:
-    #     abort(400)
-    # if 'description' in request.json and type(request.json['description']) is not unicode:
-    #     abort(400)
-    # if 'done' in request.json and type(request.json['done']) is not bool:
-    #     abort(400)
+#UPDATE TASK
+@app.route('/<username>/tasks/<int:task_id>', methods=['PUT'])
+def update_task(username,task_id):
 
-    #Checks for data that is changed explicitly
+    user = Tasks.query.filter_by(name=username).first()
+    if not user:
+        return jsonify({'message':'No tasks by user'})
+
+    task = Tasks.query.filter_by(id=task_id).first()
+    if not task:
+        return jsonify({'message':'Task not found'})
+
     if 'title' in request.json:
         task.title = request.json['title']
     if 'description' in request.json:
-        task.title = request.json['description']
+        task.description = request.json['description']
+    if 'done' in request.json:
+        task.done = request.json['done']
     
-    #Changes done value to done implicitly
-    task.done = request.json['done']
-    #Saves changes
     db.session.commit()
     return jsonify({'task': 'updated'})
 
-@app.route('/todo/<string:uname>/tasks/<int:task_id>', methods=['DELETE'])
+#DELETE TASK
+@app.route('/<string:uname>/tasks/<int:task_id>', methods=['DELETE'])
 def delete_task(uname,task_id):
     task = Tasks.query.filter_by(id=task_id).first()
     db.session.delete(task)
     db.session.commit()
     return jsonify({'result': True})
 
-#Creates a new_task with all fields but ID
-def make_public_task(task):
-    new_task = {}
-    for field in task:
-        if field == 'id':
-            new_task['uri'] = url_for('get_task', task_id=task['id'], _external=True)
-        else:
-            new_task[field] = task[field]
-    return new_task
 
 
 if __name__ == '__main__':
