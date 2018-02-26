@@ -3,9 +3,9 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
 import uuid
 from werkzeug.security import generate_password_hash, check_password_hash
-import jwt
 import json
 import datetime
+import jwt
 from functools import wraps
 
 app = Flask(__name__)
@@ -36,13 +36,13 @@ class User(db.Model):
 #TASK MODEL
 class Tasks(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(80))
+    user_id = db.Column(db.String(80))
     title = db.Column(db.String(80), unique=True)
     description = db.Column(db.String(120), unique=True)
     done = db.Column(db.String(10))
 
-    def __init__(self, name, title, description, done):
-        self.name = name
+    def __init__(self, id, title, description, done):
+        self.user_id = id
         self.title = title
         self.description = description
         self.done = done
@@ -55,10 +55,55 @@ class TasksSchema(ma.ModelSchema):
     class Meta:
         model = Tasks
 
+#TOKEN VERIFICATION FOR USER DECORATOR | returns user instance for that token
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token=None
+        if 'x-access-token' in request.headers:
+            token = request.headers['x-access-token']
+        
+        if not token:
+            return jsonify({'message':'Token is missing!'}),401
+
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'])
+            create_user = User.query.filter_by(public_id=data['public_id']).first()
+            if not create_user:
+                return jsonify({'message':'User not found'})
+        except:
+            return jsonify({'message':'Token is invalid'}), 401
+
+        return f(create_user, *args, **kwargs)
+    return decorated
+
+#GENERATES TOKEN 
+@app.route('/login')
+def login():
+    auth=request.authorization
+
+    if not auth or not auth.username or not auth.password:
+        return make_response('Could not verify', 401, {'WWW-Authenticate':'Basic realm="Login required"'})
+
+    user=User.query.filter_by(username=auth.username).first()
+
+    if not user:
+        return make_response('Could not verify', 401, {'WWW-Authenticate':'Basic realm="Login required"'})
+
+    if check_password_hash(user.password, auth.password):
+        token = jwt.encode({'public_id': user.public_id,'exp': datetime.datetime.utcnow()+datetime.timedelta(minutes=120)},app.config['SECRET_KEY'])
+        return jsonify({'token': token.decode('UTF-8')})
+    
+
 
 #USER ALL USERS
 @app.route('/users')
-def get_all_users():
+@token_required
+def get_all_users(current_user):
+
+    if not current_user.admin:
+        return jsonify({'message': 'Cannot perform that operation'})
+
     users = User.query.all()
     output=[]
     for user in users:
@@ -68,11 +113,17 @@ def get_all_users():
         user_data['email'] = user.email
         output.append(user_data)
 
-    return jsonify({'Users':output})
+    # return jsonify({'Users':output})
+    return jsonify({'Users':current_user.id})
 
 #GET USER
 @app.route('/user/<public_id>', methods=['GET'])
-def get_one_user(public_id):
+@token_required
+def get_one_user(current_user,public_id):
+
+    if not current_user.admin:
+        return jsonify({'message': 'Cannot perform that operation'})
+
     user = User.query.filter_by(public_id=public_id).first()
     if not user:
         return jsonify({'message':'User not found'})
@@ -81,10 +132,16 @@ def get_one_user(public_id):
     user_data['username'] = user.username
     user_data['email'] = user.email
     return jsonify({'User':user_data})   
+    
 
 #UPDATE USER TO ADMIN
 @app.route('/user/<public_id>', methods=['PUT'])
-def update_user(public_id):
+@token_required
+def update_user(current_user,public_id):
+    
+    if not current_user.admin:
+        return jsonify({'message': 'Cannot perform that operation'})
+
     user = User.query.filter_by(public_id=public_id).first()
     if not user:
         return jsonify({'message':'User not found'})
@@ -97,6 +154,7 @@ def update_user(public_id):
 #ADD USER
 @app.route('/user', methods=['POST'])
 def create_user():
+   
     data = request.get_json()
     hashed_password = generate_password_hash(data['password'],method='sha256')
     new_user = User(str(uuid.uuid4()),data['username'],data['email'],hashed_password,False)
@@ -106,7 +164,9 @@ def create_user():
 
 #DELETE USER
 @app.route('/user/<public_id>', methods=['DELETE'])
-def delete_user(public_id):
+@token_required
+def delete_user(current_user,public_id):
+
     user = User.query.filter_by(public_id=public_id).first()
     if not user:
         return jsonify({'message':'User not found'})
@@ -116,15 +176,19 @@ def delete_user(public_id):
 
 #GET ALL TASKS
 @app.route('/tasks', methods=['GET'])
-def get_all_tasks():
-    tasks = Tasks.query.all()
+@token_required
+def get_all_tasks(current_user):
+
+    tasks = Tasks.query.filter_by(name=current_user.username).all()
     tasks_schema = TasksSchema(many=True)
     res = tasks_schema.dump(tasks).data
     return jsonify({'Tasks':res})
 
 #GET TASK
 @app.route('/task/<int:task_id>', methods=['GET'])
-def get_one_task(task_id):
+@token_required
+def get_one_task(current_user,task_id):
+
     task = [task for task in tasks if task['id'] == task_id]
     return jsonify({'task': task[0]})
 
@@ -134,13 +198,11 @@ def not_found(error):
     return make_response(jsonify({'error': 'Not found'}), 404)
 
 #CREATE TASK
-@app.route('/<username>/tasks', methods=['POST'])
-def create_task(username):
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message':'User not found'})
+@app.route('/tasks', methods=['POST'])
+@token_required
+def create_task(current_user):
     task = Tasks(
-        user.username,
+        current_user.id,
         request.json['title'],
         request.json['description'],
         False)
@@ -149,12 +211,9 @@ def create_task(username):
     return jsonify({'result': 'success'})
 
 #UPDATE TASK
-@app.route('/<username>/tasks/<int:task_id>', methods=['PUT'])
-def update_task(username,task_id):
-
-    user = Tasks.query.filter_by(name=username).first()
-    if not user:
-        return jsonify({'message':'No tasks by user'})
+@app.route('/tasks/<int:task_id>', methods=['PUT'])
+@token_required
+def update_task(current_user,task_id):
 
     task = Tasks.query.filter_by(id=task_id).first()
     if not task:
@@ -171,8 +230,9 @@ def update_task(username,task_id):
     return jsonify({'task': 'updated'})
 
 #DELETE TASK
-@app.route('/<string:uname>/tasks/<int:task_id>', methods=['DELETE'])
-def delete_task(uname,task_id):
+@app.route('/tasks/<int:task_id>', methods=['DELETE'])
+@token_required
+def delete_task(current_user,task_id):
     task = Tasks.query.filter_by(id=task_id).first()
     db.session.delete(task)
     db.session.commit()
